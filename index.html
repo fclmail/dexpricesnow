@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT  
+pragma solidity ^0.8.0;  
+
+// Importing the interface for ERC20 tokens (USDC)  
+interface IERC20 {  
+    function balanceOf(address account) external view returns (uint256);  
+    function transfer(address recipient, uint256 amount) external returns (bool);  
+    function approve(address spender, uint256 amount) external returns (bool);  
+}  
+
+// Interface for the PancakeSwap or Uniswap-like Router on Polygon (QuickSwap / SushiSwap)  
+interface IRouter {  
+    function swapExactTokensForTokens(  
+        uint amountIn,  
+        uint amountOutMin,  
+        address[] calldata path,  
+        address to,  
+        uint deadline  
+    ) external returns (uint[] memory amounts);  
+}  
+
+contract GridBot {  
+    address private owner;  
+    address private usdcAddress = 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174; // USDC on Polygon  
+    address private routerAddress = 0xa5E0829CA1E18A17e08c9A2704C6D8C1C8B8128a; // QuickSwap Router on Polygon  
+    address private recipient =  0x9e63CDc3D66714f0FCe5B3347139E117a04A75b3 ; // MetaMask Wallet Address for profit withdrawal  
+
+    IERC20 private usdc;  
+    IRouter private router;  
+
+    uint256 public gridBuyThreshold = 1000 * 10**6; // Buy USDC when price drops below this threshold  
+    uint256 public gridSellThreshold = 1010 * 10**6; // Sell USDC when price rises above this threshold  
+    // Changed the trading amount from 100 * 10**6 to 1 * 10**6 (for $0.01)  
+    uint256 public tradingAmount = 1 * 10**6; // Amount of USDC to trade per transaction (0.01 USDC)  
+
+    constructor() {  
+        owner = msg.sender;  
+        usdc = IERC20(usdcAddress);  
+        router = IRouter(routerAddress);  
+    }  
+
+    // Modifier to restrict only the owner to perform sensitive actions  
+    modifier onlyOwner() {  
+        require(msg.sender == owner, "Only owner can execute this.");  
+        _;  
+    }  
+
+    // Function to swap USDC to another token (e.g., DAI) or vice versa  
+    function swapUSDCToToken(address tokenOut) public onlyOwner {  
+        uint256 usdcBalance = usdc.balanceOf(address(this));  
+        require(usdcBalance >= tradingAmount, "Insufficient balance for trade");  
+
+        // Approve the router to spend USDC  
+        require(usdc.approve(routerAddress, tradingAmount), "Approve failed");  
+
+        // Define the path for the swap: USDC -> TokenOut (e.g., USDC -> DAI)  
+        address[] memory path = new address[](2);  
+        path[0] = usdcAddress;  
+        path[1] = tokenOut;  
+
+        // Execute the trade (swapExactTokensForTokens)  
+        router.swapExactTokensForTokens(  
+            tradingAmount,  
+            0, // amountOutMin is 0 for simplicity; normally, you would calculate this dynamically  
+            path,  
+            address(this), // Receiving tokens in the contract  
+            block.timestamp + 60 // Deadline for the trade  
+        );  
+    }  
+
+    // Function to sell back token to USDC (example: DAI -> USDC)  
+    function swapTokenToUSDC(address tokenIn) public onlyOwner {  
+        uint256 tokenBalance = IERC20(tokenIn).balanceOf(address(this));  
+        require(tokenBalance >= tradingAmount, "Insufficient balance for trade");  
+
+        // Approve the router to spend the input token  
+        require(IERC20(tokenIn).approve(routerAddress, tradingAmount), "Approve failed");  
+
+        // Define the path for the swap: TokenIn -> USDC  
+        address[] memory path = new address[](2);  
+        path[0] = tokenIn;  
+        path[1] = usdcAddress;  
+
+        // Execute the trade (swapExactTokensForTokens)  
+        router.swapExactTokensForTokens(  
+            tradingAmount,  
+            0, // amountOutMin is 0 for simplicity; normally, you would calculate this dynamically  
+            path,  
+            address(this), // Receiving USDC in the contract  
+            block.timestamp + 60 // Deadline for the trade  
+        );  
+    }  
+
+    // Function to withdraw profits (transfer to the recipient address)  
+    function withdrawProfits() external onlyOwner {  
+        uint256 usdcBalance = usdc.balanceOf(address(this));  
+        require(usdcBalance > 0, "No profit to withdraw");  
+
+        // Transfer USDC profits to the recipient address  
+        require(usdc.transfer(recipient, usdcBalance), "Transfer failed");  
+    }  
+
+    // Example function to execute grid trading manually (buy low, sell high)  
+    function executeGridTrading(address tokenIn, address tokenOut) external onlyOwner {  
+        uint256 currentPrice = getCurrentPrice(); // This is an off-chain value you would fetch from an oracle  
+        if (currentPrice < gridBuyThreshold) {  
+            swapUSDCToToken(tokenOut); // Buy the token if price is low  
+        } else if (currentPrice > gridSellThreshold) {  
+            swapTokenToUSDC(tokenIn); // Sell the token if price is high  
+        }  
+    }  
+
+    // Placeholder function to represent price fetching logic  
+    function getCurrentPrice() internal pure returns (uint256) {  
+        // Implement your price fetching logic here (e.g., from an oracle)  
+        return 0; // Placeholder return value  
+    }  
+}
